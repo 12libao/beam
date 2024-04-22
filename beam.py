@@ -57,6 +57,7 @@ class Truss:
                 for jj in self.var[index, :]:
                     i.append(ii)
                     j.append(jj)
+
         # Convert the lists into numpy arrays
         self.i = np.array(i, dtype=int)
         self.j = np.array(j, dtype=int)
@@ -122,9 +123,8 @@ class Truss:
         """
         f = np.zeros(ndof)
         for node in forces:
-            dof_list = forces[node]
-            for index in dof_list:
-                f[3 * node + index] = -1.0
+            for index, force in zip(*forces[node]):
+                f[3 * node + index] = force
         return f
 
     def _get_element_transform(self, elem):
@@ -133,28 +133,28 @@ class Truss:
         dx = self.xpts[n2, 0] - self.xpts[n1, 0]
         dy = self.xpts[n2, 1] - self.xpts[n1, 1]
 
-        L = np.sqrt(dx**2 + dy**2)
-        c = dx / L
-        s = dy / L
+        Le = np.sqrt(dx**2 + dy**2)
+        c = dx / Le
+        s = dy / Le
 
         T = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])
 
-        return L, T
+        return Le, T
 
     def _get_element_stifness_matrix(self, elem, area):
         """Compute the element stiffness matrix"""
 
-        L, T = self._get_element_transform(elem)
+        Le, T = self._get_element_transform(elem)
 
         Te = np.zeros((6, 6))
         Te[0:3, 0:3] = T
         Te[3:6, 3:6] = T
 
         EA = self.E * area
-        k1 = EA / L
+        k1 = EA / Le
 
         EI = self.E * self.rg * area**2
-        k2 = EI / L**3
+        k2 = EI / Le**3
 
         Ke = np.zeros((6, 6))
 
@@ -166,65 +166,64 @@ class Truss:
 
         # Set the elements for the beam components
         Ke[1, 1] = 12 * k2
-        Ke[1, 2] = 6 * k2 * L
+        Ke[1, 2] = 6 * k2 * Le
         Ke[1, 4] = -12 * k2
-        Ke[1, 5] = 6 * k2 * L
+        Ke[1, 5] = 6 * k2 * Le
 
-        Ke[2, 1] = 6 * k2 * L
-        Ke[2, 2] = 4 * k2 * L**2
-        Ke[2, 4] = -6 * k2 * L
-        Ke[2, 5] = 2 * k2 * L**2
+        Ke[2, 1] = 6 * k2 * Le
+        Ke[2, 2] = 4 * k2 * Le**2
+        Ke[2, 4] = -6 * k2 * Le
+        Ke[2, 5] = 2 * k2 * Le**2
 
         Ke[4, 1] = -12 * k2
-        Ke[4, 2] = -6 * k2 * L
+        Ke[4, 2] = -6 * k2 * Le
         Ke[4, 4] = 12 * k2
-        Ke[4, 5] = -6 * k2 * L
+        Ke[4, 5] = -6 * k2 * Le
 
-        Ke[5, 1] = 6 * k2 * L
-        Ke[5, 2] = 2 * k2 * L**2
-        Ke[5, 4] = -6 * k2 * L
-        Ke[5, 5] = 4 * k2 * L**2
+        Ke[5, 1] = 6 * k2 * Le
+        Ke[5, 2] = 2 * k2 * Le**2
+        Ke[5, 4] = -6 * k2 * Le
+        Ke[5, 5] = 4 * k2 * Le**2
 
         return Te.T @ Ke @ Te
 
     def _get_element_stress_stiffness_matrix(self, elem, u, area):
         """Compute the element stiffness matrix"""
 
-        L, T = self._get_element_transform(elem)
+        Le, T = self._get_element_transform(elem)
 
         Te = np.zeros((6, 6))
         Te[0:3, 0:3] = T
         Te[3:6, 3:6] = T
+        ue = Te @ u
 
         EA = self.E * area
-        k1 = EA / L
-
-        ue = Te @ u
+        k1 = EA / Le
         Ne = k1 * (ue[3] - ue[0])
 
         Ge = np.zeros((6, 6))
 
         # Set the elements for the beam components
-        kg = Ne / L
+        kg = Ne / Le
         Ge[1, 1] = 6 * kg / 5
-        Ge[1, 2] = kg * L / 10
+        Ge[1, 2] = kg * Le / 10
         Ge[1, 4] = -6 * kg / 5
-        Ge[1, 5] = kg * L / 10
+        Ge[1, 5] = kg * Le / 10
 
-        Ge[2, 1] = kg * L / 10
-        Ge[2, 2] = 2 * kg * L**2 / 15
-        Ge[2, 4] = -kg * L / 10
-        Ge[2, 5] = -kg * L**2 / 30
+        Ge[2, 1] = kg * Le / 10
+        Ge[2, 2] = 2 * kg * Le**2 / 15
+        Ge[2, 4] = -kg * Le / 10
+        Ge[2, 5] = -kg * Le**2 / 30
 
         Ge[4, 1] = -6 * kg / 5
-        Ge[4, 2] = -kg * L / 10
+        Ge[4, 2] = -kg * Le / 10
         Ge[4, 4] = 6 * kg / 5
-        Ge[4, 5] = -kg * L / 10
+        Ge[4, 5] = -kg * Le / 10
 
-        Ge[5, 1] = kg * L / 10
-        Ge[5, 2] = -kg * L**2 / 30
-        Ge[5, 4] = -kg * L / 10
-        Ge[5, 5] = 2 * kg * L**2 / 15
+        Ge[5, 1] = kg * Le / 10
+        Ge[5, 2] = -kg * Le**2 / 30
+        Ge[5, 4] = -kg * Le / 10
+        Ge[5, 5] = 2 * kg * Le**2 / 15
 
         return Te.T @ Ge @ Te
 
@@ -262,11 +261,6 @@ class Truss:
     def solve_eigenvalue_problem(self, x, sigma=1.0):
 
         K0 = self._assemble_stiffness_matrix(x)
-        # check if K0 is symmetric
-        ic(np.allclose(K0.todense(), K0.todense().T))
-        # check if K0 is positive definite
-        ic(np.all(np.linalg.eigvals(K0.todense()) > 0))
-
         K = self._reduce_matrix(K0)
 
         # Compute the solution path
@@ -276,23 +270,18 @@ class Truss:
 
         G0 = self._assemble_stress_stiffness_matrix(x, u)
         G = self._reduce_matrix(G0)
-        # check if G0 is symmetric
-        ic(np.allclose(G0.todense(), G0.todense().T))
-        # check if G0 is positive definite
-        ic(np.all(np.linalg.eigvals(G0.todense()) > 0))
-        
-        mu, Q = scipy.linalg.eigh(G.todense(), K.todense())
-        # mu, Q = scipy.linalg.eigh(-G.todense(), K.todense())
 
-        # mu, Q = sparse.linalg.eigsh(
-        #     G,
-        #     M=K,
-        #     k=self.N,
-        #     sigma=sigma,
-        #     which="SM",
-        #     maxiter=1000,
-        #     tol=1e-8,
-        # )
+        # mu, Q = scipy.linalg.eigh(G.todense(), K.todense())
+
+        mu, Q = sparse.linalg.eigsh(
+            G,
+            M=K,
+            k=self.N,
+            sigma=sigma,
+            which="SM",
+            maxiter=1000,
+            tol=1e-8,
+        )
 
         self.mu = mu
         self.BLF = -1.0 / mu
@@ -329,7 +318,7 @@ class Truss:
             x2 = self.xpts[n2, 0] + disp[3 * n2]
             y2 = self.xpts[n2, 1] + disp[3 * n2 + 1]
 
-            ax.plot([x1, x2], [y1, y2], "b-")
+            ax.plot([x1, x2], [y1, y2], "b-o")
 
         return
 
@@ -355,8 +344,8 @@ if __name__ == "__main__":
     N = settings["N"]
 
     # Set the nodal coordinates
-    xpts = np.linspace(0.0, L, nelems + 1)
-    xpts = np.vstack([xpts, np.zeros(nelems + 1)]).T
+    xpts = np.zeros((nelems + 1, 2))
+    xpts[:, 0] = np.linspace(0.0, L, nelems + 1)
 
     # Set the connectivity
     conn = np.array([[i, i + 1] for i in range(nelems)])
@@ -365,7 +354,7 @@ if __name__ == "__main__":
     bcs = {0: [0, 1], nelems: [1]}
 
     # Set the forces, tip force at the right end
-    forces = {nelems: [0]}
+    forces = {nelems: ([0], [-1])}
 
     # Create the truss object
     truss = Truss(
@@ -373,12 +362,11 @@ if __name__ == "__main__":
     )
 
     # visualize the truss with displacement
-    x = np.random.random(nelems)
+    x = np.ones(nelems)
     BLF, Q = truss.solve_eigenvalue_problem(x)
-    ic(BLF)
-    
-    BLF_al = np.pi ** 2 * settings["E"] * settings["rg"] * x ** 2 / settings["L"] ** 2
-    ic(BLF_al)
+
+    BLF_al = np.pi**2 * settings["E"] * settings["rg"] * x[0] ** 2 / settings["L"] ** 2
+    ic(BLF[0] - BLF_al)
 
     fig, ax = plt.subplots(N, 1, figsize=(4, N), sharex=True, sharey=True)
     for i in range(N):
