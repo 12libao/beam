@@ -40,7 +40,7 @@ class Truss:
         self.rg = rg  # Radius of gyration
 
         # Set the reduced set of forces
-        self.reduced = self._compute_reduced_variables(self.nvndofars, bcs)
+        self.reduced = self._compute_reduced_variables(self.ndof, bcs)
         self.f = self._compute_forces(self.ndof, forces)
 
         # Set up the i-j indices for the matrix - these are the row
@@ -100,7 +100,7 @@ class Truss:
         """
         if vec.ndim == 1:
             temp = np.zeros(self.ndof, dtype=vec.dtype)
-            temp[self.reduced, :] = vec[:]
+            temp[self.reduced] = vec[:]
         elif vec.ndim == 2:
             temp = np.zeros((self.ndof, vec.shape[1]), dtype=vec.dtype)
             temp[self.reduced, :] = vec[:]
@@ -115,6 +115,17 @@ class Truss:
             for j in range(len(self.reduced)):
                 temp[self.reduced[i], self.reduced[j]] = mat[i, j]
         return temp
+
+    def _compute_forces(self, ndof, forces):
+        """
+        Compute the forces vector
+        """
+        f = np.zeros(ndof)
+        for node in forces:
+            dof_list = forces[node]
+            for index in dof_list:
+                f[3 * node + index] = 1.0
+        return f
 
     def _get_element_transform(self, elem):
         n1 = self.conn[elem, 0]
@@ -133,7 +144,7 @@ class Truss:
     def _get_element_stifness_matrix(self, elem, area):
         """Compute the element stiffness matrix"""
 
-        L, T = self.get_element_transform(elem)
+        L, T = self._get_element_transform(elem)
 
         Te = np.zeros((6, 6))
         Te[0:3, 0:3] = T
@@ -176,23 +187,18 @@ class Truss:
 
         return Te.T @ Ke @ Te
 
-    def _get_element_stress_stifness_matrix(self, elem, u, area):
+    def _get_element_stress_stiffness_matrix(self, elem, u, area):
         """Compute the element stiffness matrix"""
 
-        L, T = self.get_element_transform(elem)
+        L, T = self._get_element_transform(elem)
 
         Te = np.zeros((6, 6))
         Te[0:3, 0:3] = T
         Te[3:6, 3:6] = T
 
-        ue = T @ u
-
         EA = self.E * area
         k1 = EA / L
-        Ne = k1 * (u[3] - u[0])
-
-        EI = self.E * self.rg * area**2
-        k2 = EI / L**3
+        Ne = k1 * (u[2] - u[0])
 
         Ge = np.zeros((6, 6))
 
@@ -234,9 +240,16 @@ class Truss:
     def _assemble_stress_stiffness_matrix(self, x, u):
         Ge = np.zeros((self.nelems, 6, 6))
 
+        ue = np.zeros((self.nelems, 6), dtype=x.dtype)
+
         for elem in range(self.nelems):
-            Ge[elem, :, :] = self._get_element_stress_stifness_matrix(
-                elem, x[elem], u[self.var[elem, :]]
+            L, T = self._get_element_transform(elem)
+            ue[elem, 0:3] = T @ u[3 * self.conn[elem, 0] : 3 * self.conn[elem, 0] + 3]
+            ue[elem, 3:6] = T @ u[3 * self.conn[elem, 1] : 3 * self.conn[elem, 1] + 3]
+
+        for elem in range(self.nelems):
+            Ge[elem, :, :] = self._get_element_stress_stiffness_matrix(
+                elem, ue[elem, :], x[elem]
             )
 
         G = sparse.coo_matrix((Ge.flatten(), (self.i, self.j)))
@@ -251,10 +264,10 @@ class Truss:
 
         # Compute the solution path
         fr = self._reduce_vector(self.f)
-        fact = linalg.factorized(K0)
+        fact = linalg.factorized(K.tocsc())
         u = self._full_vector(fact(fr))
 
-        G0 = self._assemble_stress_stiffness_matrix(x)
+        G0 = self._assemble_stress_stiffness_matrix(x, u)
         G = self._reduce_matrix(G0)
 
         mu, Q = sparse.linalg.eigsh(
@@ -285,3 +298,72 @@ class Truss:
             h += eta[i] * Q[self.hdof] ** 2
 
         return h
+
+    def visualize(self, ax, disp=None):
+        """
+        Visualize the truss structure
+        """
+        if disp is None:
+            disp = np.zeros(self.ndof)
+
+        for elem in range(self.nelems):
+            n1 = self.conn[elem, 0]
+            n2 = self.conn[elem, 1]
+
+            x1 = self.xpts[n1, 0] + disp[3 * n1]
+            y1 = self.xpts[n1, 1] + disp[3 * n1 + 1]
+            x2 = self.xpts[n2, 0] + disp[3 * n2]
+            y2 = self.xpts[n2, 1] + disp[3 * n2 + 1]
+
+            ax.plot([x1, x2], [y1, y2], "b-")
+
+        return
+
+
+if __name__ == "__main__":
+    # Set the random seed
+    np.random.seed(0)
+
+    # set the beam parameters use dictioanry
+    settings = {
+        "L": 1.0,
+        "nelems": 100,
+        "N": 6,
+        "E": 1.0,
+        "rg": 1.0,
+        "rho": 1.0,
+        "ks_rho": 10.0,
+    }
+
+    # Set the length of the beam
+    L = settings["L"]
+    nelems = settings["nelems"]
+    N = settings["N"]
+
+    # Set the nodal coordinates
+    xpts = np.linspace(0.0, L, nelems + 1)
+    xpts = np.vstack([xpts, np.zeros(nelems + 1)]).T
+
+    # Set the connectivity
+    conn = np.array([[i, i + 1] for i in range(nelems)])
+
+    # Set the boundary conditions, Fixed at the left end and pinned at the right end
+    bcs = {0: [0, 1], nelems: [1]}
+
+    # Set the forces, tip force at the right end
+    forces = {nelems: [0]}
+
+    # Create the truss object
+    truss = Truss(
+        conn, xpts, E=settings["E"], rg=settings["rg"], bcs=bcs, forces=forces
+    )
+
+    # visualize the truss with displacement
+    x = np.random.random(nelems)
+    BLF, Q = truss.solve_eigenvalue_problem(x)
+
+    fig, ax = plt.subplots(N, 1, figsize=(4, N), sharex=True, sharey=True)
+    for i in range(N):
+        truss.visualize(ax[i], disp=Q[:, i])
+
+    plt.show()
