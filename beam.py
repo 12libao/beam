@@ -1,6 +1,6 @@
 import itertools
 import time
-
+from icecream import ic
 import matplotlib as mpl
 import matplotlib.pylab as plt
 import numpy as np
@@ -124,7 +124,7 @@ class Truss:
         for node in forces:
             dof_list = forces[node]
             for index in dof_list:
-                f[3 * node + index] = 1.0
+                f[3 * node + index] = -1.0
         return f
 
     def _get_element_transform(self, elem):
@@ -198,7 +198,9 @@ class Truss:
 
         EA = self.E * area
         k1 = EA / L
-        Ne = k1 * (u[2] - u[0])
+
+        ue = Te @ u
+        Ne = k1 * (ue[3] - ue[0])
 
         Ge = np.zeros((6, 6))
 
@@ -240,16 +242,16 @@ class Truss:
     def _assemble_stress_stiffness_matrix(self, x, u):
         Ge = np.zeros((self.nelems, 6, 6))
 
-        ue = np.zeros((self.nelems, 6), dtype=x.dtype)
+        # ue = np.zeros((self.nelems, 6), dtype=x.dtype)
+        u_elem = np.zeros((self.nelems, 6), dtype=x.dtype)
 
         for elem in range(self.nelems):
-            L, T = self._get_element_transform(elem)
-            ue[elem, 0:3] = T @ u[3 * self.conn[elem, 0] : 3 * self.conn[elem, 0] + 3]
-            ue[elem, 3:6] = T @ u[3 * self.conn[elem, 1] : 3 * self.conn[elem, 1] + 3]
+            u_elem[elem, 0:3] = u[3 * self.conn[elem, 0] : 3 * self.conn[elem, 0] + 3]
+            u_elem[elem, 3:6] = u[3 * self.conn[elem, 1] : 3 * self.conn[elem, 1] + 3]
 
         for elem in range(self.nelems):
             Ge[elem, :, :] = self._get_element_stress_stiffness_matrix(
-                elem, ue[elem, :], x[elem]
+                elem, u_elem[elem, :], x[elem]
             )
 
         G = sparse.coo_matrix((Ge.flatten(), (self.i, self.j)))
@@ -260,6 +262,11 @@ class Truss:
     def solve_eigenvalue_problem(self, x, sigma=1.0):
 
         K0 = self._assemble_stiffness_matrix(x)
+        # check if K0 is symmetric
+        ic(np.allclose(K0.todense(), K0.todense().T))
+        # check if K0 is positive definite
+        ic(np.all(np.linalg.eigvals(K0.todense()) > 0))
+
         K = self._reduce_matrix(K0)
 
         # Compute the solution path
@@ -269,16 +276,23 @@ class Truss:
 
         G0 = self._assemble_stress_stiffness_matrix(x, u)
         G = self._reduce_matrix(G0)
+        # check if G0 is symmetric
+        ic(np.allclose(G0.todense(), G0.todense().T))
+        # check if G0 is positive definite
+        ic(np.all(np.linalg.eigvals(G0.todense()) > 0))
+        
+        mu, Q = scipy.linalg.eigh(G.todense(), K.todense())
+        # mu, Q = scipy.linalg.eigh(-G.todense(), K.todense())
 
-        mu, Q = sparse.linalg.eigsh(
-            G,
-            M=K,
-            k=self.N,
-            sigma=sigma,
-            which="SM",
-            maxiter=1000,
-            tol=1e-8,
-        )
+        # mu, Q = sparse.linalg.eigsh(
+        #     G,
+        #     M=K,
+        #     k=self.N,
+        #     sigma=sigma,
+        #     which="SM",
+        #     maxiter=1000,
+        #     tol=1e-8,
+        # )
 
         self.mu = mu
         self.BLF = -1.0 / mu
@@ -327,7 +341,7 @@ if __name__ == "__main__":
     # set the beam parameters use dictioanry
     settings = {
         "L": 1.0,
-        "nelems": 100,
+        "nelems": 20,
         "N": 6,
         "E": 1.0,
         "rg": 1.0,
@@ -355,12 +369,16 @@ if __name__ == "__main__":
 
     # Create the truss object
     truss = Truss(
-        conn, xpts, E=settings["E"], rg=settings["rg"], bcs=bcs, forces=forces
+        conn, xpts, E=settings["E"], rg=settings["rg"], bcs=bcs, forces=forces, N=N
     )
 
     # visualize the truss with displacement
     x = np.random.random(nelems)
     BLF, Q = truss.solve_eigenvalue_problem(x)
+    ic(BLF)
+    
+    BLF_al = np.pi ** 2 * settings["E"] * settings["rg"] * x ** 2 / settings["L"] ** 2
+    ic(BLF_al)
 
     fig, ax = plt.subplots(N, 1, figsize=(4, N), sharex=True, sharey=True)
     for i in range(N):
