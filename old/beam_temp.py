@@ -5,6 +5,7 @@ from icecream import ic
 import matplotlib
 import matplotlib as mpl
 from matplotlib import patheffects
+import matplotlib.gridspec as gridspec
 from matplotlib.legend_handler import HandlerTuple
 import matplotlib.patches as patches
 from matplotlib.path import Path
@@ -69,6 +70,11 @@ niceColors["Grey"] = "#5a5758"
 niceColors["Black"] = "#000000"
 colors = list(niceColors.values())
 
+title_fontsize = 8
+label_fontsize = 8
+legend_fontsize = 7
+text_fontsize = 5.5
+
 
 class Truss:
     def __init__(
@@ -96,15 +102,15 @@ class Truss:
 
         # Degree of freedom to use as a relative modal displacement constraint
         if hdof is None:
-            for i, xp in enumerate(self.xpts):
-                if np.allclose(xp, [0.0, 0.0]):
-                    self.hdof = np.zeros((self.ndof, self.ndof))
-                    self.hdof[3 * i, 3 * i] = 1.0
-                    self.hdof[3 * i + 1, 3 * i + 1] = 1.0
-                    self.hdof[3 * i + 2, 3 * i + 2] = 1.0
-                    break
+            self.hdof = np.zeros((self.ndof, self.ndof))
+            node_index = np.floor(self.nelems / 2).astype(int)
+            ic(node_index)
+            self.hdof[3 * (node_index - 1), 3 * (node_index - 1)] = 1.0
+            # self.hdof[3 * (node_index - 1) + 1, 3 * (node_index - 1) + 1] = 1.0
+            # self.hdof[3 * (node_index - 1) + 2, 3 * (node_index - 1) + 2] = 1.0
         else:
             self.hdof = hdof
+            ic(self.hdof)
 
         self.E = E  # Elastic modulus
         self.rg = rg  # Radius of gyration
@@ -410,7 +416,7 @@ class Optimization(Truss):
 
         self.ks_rho_h = kwargs.get("ks_rho_h", 10.0)
         self.ks_rho_blf = kwargs.get("ks_rho_blf", 10.0)
-        self.mass_upper = 1.0
+        self.mass_upper = 1.1
         self.h_upper = 0.23
 
     def objective(self, x):
@@ -418,7 +424,7 @@ class Optimization(Truss):
         return self.approx_eigenvalue(area, self.ks_rho_blf)
 
     def mass_constr(self, x):
-        return self.mass_upper - (2 * x[0] + np.sqrt(2) * x[1]) / 2
+        return self.mass_upper - x[0] - x[1]
 
     def mass_constr_grad(self, x):
         return np.array([-1, -1])
@@ -442,7 +448,7 @@ class Optimization(Truss):
         return area
 
     def optimize(self, h_upper=0.23):
-        x0 = [0.55, 0.55]  #[0.5, 0.1]
+        x0 = [0.1, 0.1]
         self.x_hist = []
         self.x_hist.append(x0)
         self.h_upper = h_upper
@@ -460,9 +466,9 @@ class Optimization(Truss):
             self.objective,
             x0,
             method="SLSQP",  # "trust-constr", "COBYLA", "L-BFGS-B", "SLSQP", "trust-ncg"
-            bounds=[(0.001, 1.4), (0.001, 1.4)],
+            bounds=[(0.001, 1.2), (0.001, 1.2)],
             constraints=constr,
-            options={"disp": True, "maxiter": 500, "ftol": 1e-8},
+            options={"disp": True, "maxiter": 200, "ftol": 1e-8},
             callback=lambda x: print(
                 "obj: ",
                 self.objective(x),
@@ -478,10 +484,14 @@ class Optimization(Truss):
 
         return res, x_hist
 
-    def plot_contour(self, x0, x1, x2, h1, h2, n=20):
+    def plot_contour(self, gs, fig, x0, x1, x2, h1, h2, n=20):
         x = np.linspace(0.01, 1.2, n)
         y = np.linspace(0.01, 1.5, n)
         X, Y = np.meshgrid(x, y)
+
+        # cl= ["r", "sandybrown", colors[3]]
+        # cl = ["k", "royalblue", "sandybrown"]
+        cl = ["k", "k", "r"]
 
         # Z = np.zeros(X.shape)
         # mv = np.zeros(X.shape)
@@ -514,8 +524,18 @@ class Optimization(Truss):
         # normalize the Z inbetween 0 and 1
         Z1 = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))
 
-        fig, ax = plt.subplots(1, 2, figsize=(7.48, 2.8), sharex=True, sharey=True)
-        fig.subplots_adjust(wspace=0.1)
+        # fig, ax = plt.subplots(1, 2, figsize=(7.48, 2.8), sharex=True, sharey=True)
+        # devide the figure into two parts
+
+        # N1GS2 = gs.subgridspec(1, 2, width_ratios=[1, 1.15])
+        N1GS2 = gs.subgridspec(1, 2, width_ratios=[1, 1])
+        # add constrainted design space
+        ax = [fig.add_subplot(N1GS2[0, 0]), fig.add_subplot(N1GS2[0, 1])]
+        
+        # share the y axis for the two subplots
+        ax[1].sharey(ax[0])
+
+        # fig.subplots_adjust(wspace=0.1)
         base_colors = "coolwarm"
 
         for i in range(2):
@@ -533,14 +553,13 @@ class Optimization(Truss):
             )
 
         # add local minimum
-        x0 = [8.371e-01,  2.301e-01]
         l0, l1 = [], []
         for k in range(2):
             n_loc_min = [2, 3][k]
             for i in range(n_loc_min):
                 x = [x0, x1, x2][i]
                 c_h = ["k", "r", "b"][i]
-                a = [[1.0, 0.5, 0.25], [0.3, 1.0, 1.0]][k][i]
+                a = [[1.0, 0.5, 0.25], [0.25, 1.0, 1.0]][k][i]
                 p0 = ax[k].plot(
                     x[0],
                     x[1],
@@ -562,7 +581,7 @@ class Optimization(Truss):
                     alpha=a,
                 )
                 p0 = plt.plot(
-                    [], [], "*", color=c_h, ms=5, markeredgewidth=0.025, alpha=a
+                    [], [], "*", color=c_h, ms=5, markeredgewidth=0.0, alpha=a
                 )
                 p1 = plt.plot([], [], "-", color=c_h, linewidth=1.0, alpha=a)
                 list = [l0, l1][k]
@@ -574,7 +593,7 @@ class Optimization(Truss):
             cg1 = ax[i].contour(X, Y, -mv, [0.0], colors="k", alpha=1.0, linewidths=0.5)
             plt.setp(
                 cg1.collections,
-                path_effects=[patheffects.withTickedStroke(length=1.25, spacing=4)],
+                path_effects=[patheffects.withTickedStroke(length=1.0, spacing=4)],
             )
             p2 = plt.plot([], [], "-", color="k", linewidth=0.5)
             [l0, l1][i].append(p2[0])
@@ -586,7 +605,7 @@ class Optimization(Truss):
             cg2 = ax[1].contour(X, Y, -hv, [0.0], colors=c_h, linewidths=0.5)
             plt.setp(
                 cg2.collections,
-                path_effects=[patheffects.withTickedStroke(length=1.25, spacing=4)],
+                path_effects=[patheffects.withTickedStroke(length=1.0, spacing=4)],
                 label=r"$h$-constraint ($\bar{h}$ = " + str(h) + ")",
             )
             p3 = plt.plot([], [], "-", color=c_h, linewidth=0.5)
@@ -595,20 +614,20 @@ class Optimization(Truss):
         ax[0].legend(
             [(l0[0], l0[2]), (l0[1], l0[3]), l0[4]],
             [
-                r"Minimizers",
-                r"Contour for minimizers",
+                r"Local minimums $x^{*}_{i}, x^{*}_{ii}$",
+                r"Contour for $x^{*}_{i}, x^{*}_{ii}$",
                 "Mass constraint",
             ],
             handler_map={tuple: HandlerTuple(ndivide=None)},
             loc="upper right",
-            fontsize=6,
+            fontsize=legend_fontsize,
             frameon=False,
         )
         ax[1].legend(
             [(l1[0], l1[2], l1[4]), (l1[1], l1[3], l1[5]), l1[6], l1[7], l1[8]],
             [
-                r"Minimizers",
-                r"Contour for minimizers",
+                r"Local minimums $x^{*}_{i}, x^{*}_{ii}, x^{*}_{iii}$",
+                r"Contour for $x^{*}_{i}, x^{*}_{ii}, x^{*}_{iii}$",
                 "Mass constraint",
                 r"$h$-constraint ($\bar{h}$ = " + str(h1) + ")",
                 r"$h$-constraint ($\bar{h}$ = " + str(h2) + ")",
@@ -616,58 +635,61 @@ class Optimization(Truss):
             handler_map={tuple: HandlerTuple(ndivide=None)},
             handlelength=3,
             loc="upper right",
-            fontsize=6,
+            fontsize=legend_fontsize,
             frameon=False,
         )
 
-        ax[0].set_xlabel(r"$x_1$")
-        ax[1].set_xlabel(r"$x_1$")
-        ax[0].set_ylabel(r"$x_2$")
-        cbar = fig.colorbar(cs, ax=ax.ravel().tolist(), pad=0.02)
-        # cbar.set_label(r"Scaled $J^{KS}[\lambda]$")
-        cbar.set_label(r"Scaled $J^{KS}[\lambda]$")
+        # add quiver
+        ax1 = [0.1, 0.05]
+        ax2 = [0.53, 0.48]
+        dx = (ax2[0] - ax1[0]) * 18
+        dy = (ax2[1] - ax1[1]) * 18
+        Q = ax[0].quiver(
+            ax1[0],
+            ax1[1],
+            dx,
+            dy,
+            alpha=1.0,
+            scale=10,
+            scale_units="inches",
+            width=0.004,
+            zorder=100,
+        )
+        ax[0].text(
+            ax1[0] - 0.025,
+            ax1[1] + 0.025,
+            r"Direction of larger $BLF_{1}$",
+            fontsize=7,
+            color="k",
+            ha="left",
+            va="bottom",
+            rotation=45,
+            zorder=100,
+        )
+
+        ax[0].set_xlabel(r"$x_1$", fontsize=label_fontsize)
+        ax[1].set_xlabel(r"$x_1$", fontsize=label_fontsize)
+        ax[0].set_ylabel(r"$x_2$", fontsize=label_fontsize)
+        # set the colorbar is not included in ax[1]
+        cbar = fig.colorbar(
+            cs, ax=ax[1], orientation="vertical", pad=0.02
+        )  
+        cbar.set_label(r"Scaled $J^{KS}[1/BLF]$")
         cbar.ax.yaxis.labelpad = 1.0
-        cbar.ax.tick_params(labelsize=5.5)
-        bounds = np.linspace(0, -14, 8)
-        cbar.set_ticks(bounds)
+        cbar.ax.tick_params(labelsize=7)
+        cbar.ax.yaxis.set_label_position("right")
 
-        ax[0].set_title(r"Design Space no Relative Displacement Constraint", fontsize=7)
+        ax[0].set_title(
+            r"Design Space no Relative Displacement Constraint", fontsize=title_fontsize
+        )
         ax[1].set_title(
-            r"Design Space with Relative Displacement Constraint", fontsize=7
+            r"Design Space with Relative Displacement Constraint",
+            fontsize=title_fontsize,
         )
 
-        ax[0].text(
-            0.4,
-            1.35,
-            "Global Minimum",
-            fontsize=7,
-            color="r",
-            ha="center",
-            va="center",
-        )
-        ax[0].text(
-            0.55,
-            0.15,
-            "Local Minimum",
-            fontsize=7,
-            color="k",
-            ha="center",
-            va="center",
-        )
-        
-        ax[0].text(
-            0.74,
-            1.0,
-            r"Larger BLF",
-            fontsize=7,
-            color="k",
-            ha="center",
-            va="center",
-        )
-
-        plt.savefig(
-            "truss_opt_contour.png", dpi=750, bbox_inches="tight", pad_inches=0.01
-        )
+        # make sure x and y axis are equal
+        # ax[0].set_aspect("equal", "box")
+        # ax[1].set_aspect("equal", "box")
 
         return
 
@@ -880,6 +902,12 @@ class Domain:
         self.forces[2 * nn + nn // 2, 1] = -self.f
         self.forces[3 * nn + nn // 2, :2] = self.f
 
+        # self.forces = np.zeros((self.nnodes, 3))
+        # self.forces[0, 1] = self.f  # left corner along x-axis
+        # self.forces[nn, 0] = -self.f
+        # self.forces[2 * nn, 1] = -self.f
+        # self.forces[3 * nn, 0] = self.f
+
         return self.conn, self.xpts, self.bcs, self.forces
 
     def domain_square_mesh(self):
@@ -988,17 +1016,17 @@ class Domain:
             y2 = y20 + disp[3 * n2 + 1]
 
             if x is None and not domain:
-                ax.plot([x10, x20], [y10, y20], "k--", lw=0.5, alpha=0.5)
+                ax.plot([x10, x20], [y10, y20], "k--", lw=0.5, alpha=0.2)
                 ax.plot([x1, x2], [y1, y2], "-", lw=0.5, color=c)
             elif domain and x is None:
                 cw = plt.colormaps["coolwarm"](np.linspace(0, 1, 10))
                 if elem < 2 * self.nelems // 3:
                     self.P_x1 = ax.plot(
-                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color="b"
+                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=2, color=cw[0]
                     )
                 else:
                     self.P_x2 = ax.plot(
-                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color="r"
+                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=2, color=cw[9]
                     )
             else:
                 ax.plot([x10, x20], [y10, y20], "k--", lw=4 * x[elem], alpha=0.2)
@@ -1008,18 +1036,22 @@ class Domain:
             ax.axis("off")
 
         if x is None:
+            if domain:
+                ms = 5
+            else:
+                ms = 2
             # add the boundary conditions
             for node in self.bcs:
                 x = self.xpts[node, 0] + disp[3 * node]
                 y = self.xpts[node, 1] + disp[3 * node + 1]
-                self.P_bc = ax.plot(x, y, "ko", ms=3)
+                self.P_bc = ax.plot(x, y, "ko", ms=ms)
 
             # add color for the middle node
             for node in range(self.nnodes):
-                if np.allclose(self.xpts[node], [0, 0]):
+                if np.abs(xpts[node, 0]) < 1e-9 and np.abs(xpts[node, 1]) < 1e-9:
                     x = self.xpts[node, 0] + disp[3 * node]
                     y = self.xpts[node, 1] + disp[3 * node + 1]
-                    self.P_h = ax.plot(x, y, "o", ms=5, color="orange")
+                    self.P_h = ax.plot(x, y, "o", ms=ms, color="orange")
 
         # add the forces
         if quiver:
@@ -1042,86 +1074,73 @@ class Domain:
 
         return
 
-    def plot_domain(self, u=None, x=None, name=None):
-        fig, ax = plt.subplots(1, 1, figsize=(2.5, 2.5))
+    def plot_domain(self, ax, u=None, x=None):
 
         self.visualize(ax, disp=u, x=x, domain=True)
 
-        if name is None:
-            name = "truss_domain.png"
-
-        # add text
         ax.text(
             0.5,
-            1.2,
+            0.95,
             r"Design Domain",
             transform=ax.transAxes,
             ha="center",
             va="center",
-            fontsize=11,
+            fontsize=title_fontsize,
         )
 
         ax.legend(
             [self.P_bc[0], self.P_h[0], self.P_x1[0], self.P_x2[0]],
             [
-                "Node applied \n Boundary conditions",
-                "Node applied \n relative displacement constraint",
+                "Boundary conditions",
+                "Node applied relative \n displacement constraint",
                 r"Design variable 1: beam area $x_{1}$",
                 r"Design variable 2: beam area $x_{2}$",
             ],
-            loc="upper center",
+            loc="lower center",
             bbox_to_anchor=(0.5, -0.2),
-            fontsize=9.2,
+            fontsize=legend_fontsize,
             frameon=False,
             # # two columns
             # ncol=2,
         )
 
-        plt.savefig(name, dpi=1000, bbox_inches="tight", pad_inches=0.1)
-
         return
 
-    def plot_mode(self, Q, BLF, x, nfev, c=None):
+    def plot_mode(self, gs, fig, Q, BLF, x, nfev, c=None):
 
         if nfev == 0:
-            x_latex = r"Local Mininmum Design"
+            x_latex = r"$x^{*}_{i}$"
         elif nfev == 1:
-            x_latex = r"Global Minimum Design"
+            x_latex = r"$x^{*}_{ii}$"
         else:
-            x_latex = r"$\bar{h}$ Active Minimum Design"
+            x_latex = r"$x^{*}_{iii}$"
 
         nn = 7
-        fig, ax = plt.subplots(1, nn, figsize=(2 * nn, 2))
+        N3GS1 = gs.subgridspec(1, nn)
+        ax_mode = [fig.add_subplot(N3GS1[i]) for i in range(nn)]
 
         for i in range(nn):
             if i == 0:
-                t = x_latex
-                self.visualize(ax[i], x=x, c=c)
+                t = r"Optimized Design: " + x_latex
+                self.visualize(ax_mode[i], x=x, c=c)
             else:
                 t = (
                     r"Mode-${i}$".format(i=i)
-                    + r": $\lambda_{i}$ = ".format(i=i)
+                    + r": $BLF_{i}$ = ".format(i=i)
                     + f"{BLF[i-1]:.2f}"
                 )
-                self.visualize(ax[i], disp=Q[:, i - 1], c=c)
+                self.visualize(ax_mode[i], disp=Q[:, i - 1], c=c)
 
-            ax[i].text(
+            ax_mode[i].text(
                 0.5,
-                0.0,
+                0.04,
                 t,
-                transform=ax[i].transAxes,
+                transform=ax_mode[i].transAxes,
                 ha="center",
                 va="center",
-                fontsize=9,
-                # color=c,
+                fontsize=8,
             )
         # plt.subplots_adjust(wspace=0.2, hspace=-0.1)
-        plt.savefig(
-            "truss_modes" + str(nfev) + ".png",
-            dpi=500,
-            bbox_inches="tight",
-            pad_inches=0.0,
-        )
 
         return
 
@@ -1132,7 +1151,7 @@ if __name__ == "__main__":
 
     # set the beam parameters
     settings = {
-        "nelems": 12 * 10,
+        "nelems": 12 * 6,
         "L": 1.0,
         "N": 10,
         "E": 1.0,
@@ -1155,9 +1174,6 @@ if __name__ == "__main__":
     }
     conn, xpts, bcs, forces = get_domain["3"]()
 
-    with plt.style.context(["nature"]):
-        domain.plot_domain()
-
     # Optimize the truss
     opt = Optimization(
         conn,
@@ -1172,7 +1188,7 @@ if __name__ == "__main__":
     )
 
     # # Optimize the truss
-    h = [1e6, 0.16, 1e-3]
+    h = [1e6, 0.23, 0.001]
     # res0, x_hist0 = opt.optimize(h_upper=h[0])
     # res1, x_hist1 = opt.optimize(h_upper=h[1])
     # res2, x_hist2 = opt.optimize(h_upper=h[2])
@@ -1190,22 +1206,30 @@ if __name__ == "__main__":
 
     # visualize the truss with optimized design
     with plt.style.context(["nature"]):
+        fig = plt.figure(figsize=(9, 7), constrained_layout=True)  
+
+        GS = gridspec.GridSpec(ncols=1, nrows=2, figure=fig, height_ratios=[3, 4])
+        N1GS1 = GS[0].subgridspec(1, 2, width_ratios=[2, 7])
+
+        f1 = fig.add_subplot(N1GS1[0])
+        domain.plot_domain(f1)
+
         nfev = 0
         for i, x in enumerate([x0, x1, x2]):
+            gs = N1GS1[1].subgridspec(3, 1)[i]
             c = ["k", "r", "b"][i]
             x = opt.construst(x)
-            # domain.plot_domain(x=x, name="truss_design" + str(i) + ".png")
 
             BLF, Q = opt.solve_eigenvalue_problem(x)
             Q = Q / np.linalg.norm(Q, axis=0)
-            domain.plot_mode(2 * Q, BLF, x, nfev, c)
+            domain.plot_mode(gs, fig, 2 * Q, BLF, x, nfev, c)
 
             ic(BLF[: settings["N"]])
             nfev += 1
 
-    with plt.style.context(["nature"]):
-        opt.plot_contour(x0, x1, x2, h[1], h[2], n=200)
+        opt.plot_contour(GS[1], fig, x0, x1, x2, h[1], h[2], n=200)
 
+        plt.savefig("simple_example0.png", bbox_inches="tight", dpi=800, pad_inches=0.0)
 
 #################################################################
 # cl = ax[i].clabel(
