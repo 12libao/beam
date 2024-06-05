@@ -373,7 +373,7 @@ class Truss:
 
         return self.BLF, self.Q
 
-    def buckling_aggregate(self, x, ks_rho_h=1.0):
+    def buckling_aggregate(self, x, ks_rho_h=10.0):
 
         BLF, Q = self.solve_eigenvalue_problem(x)
 
@@ -384,7 +384,26 @@ class Truss:
         for i in range(self.N):
             h += eta[i] * Q[:, i].T @ self.hdof @ Q[:, i]
 
-        return h
+        def KSmax(q, ks_rho):
+            c = np.max(q)
+            eta = np.exp(ks_rho * (q - c))
+            ks_max = c + np.log(np.sum(eta)) / ks_rho
+            return ks_max
+
+        # h_max = 0.0
+        # for i in range(self.N):
+        #     q = Q[0::3, i] ** 2 + Q[1::3, i] ** 2
+        #     q_max = KSmax(q, 1.0)
+        #     h_max += eta[i] * q_max
+
+        q = np.zeros(self.Q.shape[0] // 3)
+        for i in range(self.N):
+            q += eta[i] * Q[0::3, i] ** 2 + Q[1::3, i] ** 2
+        h_max = KSmax(q, 1.0)
+
+        # h_max = 1.0
+
+        return h / h_max
 
     def approx_eigenvalue(self, x, sigma=1.0, ks_rho_blf=30.0):
         """
@@ -442,7 +461,7 @@ class Optimization(Truss):
         return area
 
     def optimize(self, h_upper=0.23):
-        x0 = [0.55, 0.55]  #[0.5, 0.1]
+        x0 = [0.1, 0.1]
         self.x_hist = []
         self.x_hist.append(x0)
         self.h_upper = h_upper
@@ -459,29 +478,33 @@ class Optimization(Truss):
         res = minimize(
             self.objective,
             x0,
-            method="SLSQP",  # "trust-constr", "COBYLA", "L-BFGS-B", "SLSQP", "trust-ncg"
+            method="COBYLA",  # "trust-constr", "COBYLA", "L-BFGS-B", "SLSQP", "trust-ncg"
             bounds=[(0.001, 1.4), (0.001, 1.4)],
             constraints=constr,
-            options={"disp": True, "maxiter": 500, "ftol": 1e-8},
-            callback=lambda x: print(
-                "obj: ",
-                self.objective(x),
-                " h_constr: ",
-                self.h_constr(x),
-                " mass_constr: ",
-                self.mass_constr(x),
-            )
-            or self.x_hist.append(x),
+            options={
+                "disp": True,
+                "maxiter": 500,
+            },
+            # callback=lambda x: print(
+            #     "obj: ",
+            #     self.objective(x),
+            #     " h_constr: ",
+            #     self.h_constr(x),
+            #     " mass_constr: ",
+            #     self.mass_constr(x),
+            # )
+            # or self.x_hist.append(x),
         )
 
         x_hist = np.array(self.x_hist)
 
         return res, x_hist
 
-    def plot_contour(self, x0, x1, x2, h1, h2, n=20):
+    def plot_contour(self, x0, x1, x2, x3, h1, h2, n=20):
         x = np.linspace(0.01, 1.2, n)
         y = np.linspace(0.01, 1.5, n)
         X, Y = np.meshgrid(x, y)
+        h3 = 0.15
 
         # Z = np.zeros(X.shape)
         # mv = np.zeros(X.shape)
@@ -490,8 +513,8 @@ class Optimization(Truss):
 
         # for i in range(X.shape[0]):
         #     for j in range(X.shape[1]):
-        #         Z[i, j] = self.objective([X[i, j], Y[i, j]])
-        #         mv[i, j] = self.mass_constr([X[i, j], Y[i, j]])
+        #         # Z[i, j] = self.objective([X[i, j], Y[i, j]])
+        #         # mv[i, j] = self.mass_constr([X[i, j], Y[i, j]])
 
         #         self.h_upper = h1
         #         hv1[i, j] = self.h_constr([X[i, j], Y[i, j]])
@@ -499,26 +522,27 @@ class Optimization(Truss):
         #         self.h_upper = h2
         #         hv2[i, j] = self.h_constr([X[i, j], Y[i, j]])
 
-        # # sava the Z, mv, hv1, hv2
         # np.save("Z.npy", Z)
         # np.save("mv.npy", mv)
-        # np.save("hv1.npy", hv1)
-        # np.save("hv2.npy", hv2)
+        # np.save("hv3.npy", hv1)
+        # np.save("hv4.npy", hv2)
 
         # read the Z, mv, hv1, hv2
         Z = np.load("Z.npy")
         mv = np.load("mv.npy")
-        hv1 = np.load("hv1.npy")
+        hv1 = np.load("hv10.npy")
         hv2 = np.load("hv2.npy")
+        hv3 = np.load("hv3.npy")
+        hv4 = np.load("hv4.npy")
 
         # normalize the Z inbetween 0 and 1
         Z1 = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))
 
-        fig, ax = plt.subplots(1, 2, figsize=(7.48, 2.8), sharex=True, sharey=True)
-        fig.subplots_adjust(wspace=0.1)
+        fig, ax = plt.subplots(1, 3, figsize=(11.2, 3.0), sharex=True, sharey=True)
+        fig.subplots_adjust(wspace=0.05)
         base_colors = "coolwarm"
 
-        for i in range(2):
+        for i in range(3):
             cs = ax[i].contourf(
                 X, Y, np.log(Z1), levels=50, alpha=0.2, cmap=base_colors
             )
@@ -533,14 +557,16 @@ class Optimization(Truss):
             )
 
         # add local minimum
-        x0 = [8.371e-01,  2.301e-01]
-        l0, l1 = [], []
-        for k in range(2):
-            n_loc_min = [2, 3][k]
+        # x0 = [8.371e-01,  2.301e-01]
+        l0, l1, l2 = [], [], []
+        for k in range(3):
+            n_loc_min = [2, 3, 3][k]
             for i in range(n_loc_min):
-                x = [x0, x1, x2][i]
+                x = [x0, x1, x3][i]
+                if k == 1:
+                    x = [x0, x1, x2][i]
                 c_h = ["k", "r", "b"][i]
-                a = [[1.0, 0.5, 0.25], [0.3, 1.0, 1.0]][k][i]
+                a = [[1.0, 0.5, 0.25], [0.3, 1.0, 1.0], [0.3, 1.0, 1.0]][k][i]
                 p0 = ax[k].plot(
                     x[0],
                     x[1],
@@ -565,32 +591,42 @@ class Optimization(Truss):
                     [], [], "*", color=c_h, ms=5, markeredgewidth=0.025, alpha=a
                 )
                 p1 = plt.plot([], [], "-", color=c_h, linewidth=1.0, alpha=a)
-                list = [l0, l1][k]
+                list = [l0, l1, l2][k]
                 list.append(p0[0])
                 list.append(p1[0])
 
         # add mass constraint line
-        for i in range(2):
+        for i in range(3):
             cg1 = ax[i].contour(X, Y, -mv, [0.0], colors="k", alpha=1.0, linewidths=0.5)
             plt.setp(
                 cg1.collections,
                 path_effects=[patheffects.withTickedStroke(length=1.25, spacing=4)],
             )
             p2 = plt.plot([], [], "-", color="k", linewidth=0.5)
-            [l0, l1][i].append(p2[0])
+            [l0, l1, l2][i].append(p2[0])
 
         # add h-constraint line for ax[1]
-        for i, h in enumerate([h1, h2]):
+        for i, h in enumerate([h1, h3]):
             hv = [hv1, hv2][i]
             c_h = ["r", "b"][i]
             cg2 = ax[1].contour(X, Y, -hv, [0.0], colors=c_h, linewidths=0.5)
             plt.setp(
                 cg2.collections,
                 path_effects=[patheffects.withTickedStroke(length=1.25, spacing=4)],
-                label=r"$h$-constraint ($\bar{h}$ = " + str(h) + ")",
             )
             p3 = plt.plot([], [], "-", color=c_h, linewidth=0.5)
             l1.append(p3[0])
+
+        for i, h in enumerate([h1, h2]):
+            hv = [hv3, hv4][i]
+            c_h = ["r", "b"][i]
+            cg2 = ax[2].contour(X, Y, -hv, [0.0], colors=c_h, linewidths=0.5)
+            plt.setp(
+                cg2.collections,
+                path_effects=[patheffects.withTickedStroke(length=1.25, spacing=4)],
+            )
+            p3 = plt.plot([], [], "-", color=c_h, linewidth=0.5)
+            l2.append(p3[0])
 
         ax[0].legend(
             [(l0[0], l0[2]), (l0[1], l0[3]), l0[4]],
@@ -601,7 +637,8 @@ class Optimization(Truss):
             ],
             handler_map={tuple: HandlerTuple(ndivide=None)},
             loc="upper right",
-            fontsize=6,
+            bbox_to_anchor=(1.03, 1.01),
+            fontsize=7,
             frameon=False,
         )
         ax[1].legend(
@@ -610,34 +647,51 @@ class Optimization(Truss):
                 r"Minimizers",
                 r"Contour for minimizers",
                 "Mass constraint",
-                r"$h$-constraint ($\bar{h}$ = " + str(h1) + ")",
-                r"$h$-constraint ($\bar{h}$ = " + str(h2) + ")",
+                r"$h$-constraint ($\bar{h}$ = 0.15)",
+                r"$h$-constraint ($\bar{h}$ = 0.001)",
             ],
             handler_map={tuple: HandlerTuple(ndivide=None)},
             handlelength=3,
             loc="upper right",
-            fontsize=6,
+            bbox_to_anchor=(1.03, 1.01),
+            fontsize=7,
+            frameon=False,
+        )
+        ax[2].legend(
+            [(l2[0], l2[2], l2[4]), (l2[1], l2[3], l2[5]), l2[6], l2[7], l2[8]],
+            [
+                r"Minimizers",
+                r"Contour for minimizers",
+                "Mass constraint",
+                r"$h$-constraint ($\bar{h}$ = " + str(h1) + r"$h_{KS}$)",
+                r"$h$-constraint ($\bar{h}$ = " + str(h2) + r"$h_{KS}$)",
+            ],
+            handler_map={tuple: HandlerTuple(ndivide=None)},
+            handlelength=3,
+            loc="upper right",
+            bbox_to_anchor=(1.03, 1.01),
+            fontsize=7,
             frameon=False,
         )
 
         ax[0].set_xlabel(r"$x_1$")
         ax[1].set_xlabel(r"$x_1$")
+        ax[2].set_xlabel(r"$x_1$")
         ax[0].set_ylabel(r"$x_2$")
-        cbar = fig.colorbar(cs, ax=ax.ravel().tolist(), pad=0.02)
-        # cbar.set_label(r"Scaled $J^{KS}[\lambda]$")
+        # cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        cbar = fig.colorbar(cs, ax=ax.ravel().tolist(), pad=0.01, aspect=40)
         cbar.set_label(r"Scaled $J^{KS}[\lambda]$")
         cbar.ax.yaxis.labelpad = 1.0
         cbar.ax.tick_params(labelsize=5.5)
         bounds = np.linspace(0, -14, 8)
         cbar.set_ticks(bounds)
 
-        ax[0].set_title(r"Design Space no Relative Displacement Constraint", fontsize=7)
-        ax[1].set_title(
-            r"Design Space with Relative Displacement Constraint", fontsize=7
-        )
+        ax[0].set_title(r"Design Space without $h$-constraint", fontsize=8)
+        ax[1].set_title(r"Design Space with $h$-constraint", fontsize=8)
+        ax[2].set_title(r"Design Space with Relative $h$-constraint", fontsize=8)
 
         ax[0].text(
-            0.4,
+            0.35,
             1.35,
             "Global Minimum",
             fontsize=7,
@@ -646,7 +700,7 @@ class Optimization(Truss):
             va="center",
         )
         ax[0].text(
-            0.55,
+            0.6,
             0.15,
             "Local Minimum",
             fontsize=7,
@@ -654,7 +708,7 @@ class Optimization(Truss):
             ha="center",
             va="center",
         )
-        
+
         ax[0].text(
             0.74,
             1.0,
@@ -666,7 +720,7 @@ class Optimization(Truss):
         )
 
         plt.savefig(
-            "truss_opt_contour.png", dpi=750, bbox_inches="tight", pad_inches=0.01
+            "truss_opt_contour.png", dpi=500, bbox_inches="tight", pad_inches=0.01
         )
 
         return
@@ -994,11 +1048,11 @@ class Domain:
                 cw = plt.colormaps["coolwarm"](np.linspace(0, 1, 10))
                 if elem < 2 * self.nelems // 3:
                     self.P_x1 = ax.plot(
-                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color="b"
+                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color=cw[0]
                     )
                 else:
                     self.P_x2 = ax.plot(
-                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color="r"
+                        [x1, x2], [y1, y2], "-o", lw=0.5, ms=1.5, color=cw[-1]
                     )
             else:
                 ax.plot([x10, x20], [y10, y20], "k--", lw=4 * x[elem], alpha=0.2)
@@ -1065,7 +1119,7 @@ class Domain:
             [self.P_bc[0], self.P_h[0], self.P_x1[0], self.P_x2[0]],
             [
                 "Node applied \n Boundary conditions",
-                "Node applied \n relative displacement constraint",
+                "Node applied $h$-constraint",
                 r"Design variable 1: beam area $x_{1}$",
                 r"Design variable 2: beam area $x_{2}$",
             ],
@@ -1088,10 +1142,12 @@ class Domain:
         elif nfev == 1:
             x_latex = r"Global Minimum Design"
         else:
-            x_latex = r"$\bar{h}$ Active Minimum Design"
+            x_latex = r"Minimum Design $(\bar{h}=0.001)$ "
 
         nn = 7
         fig, ax = plt.subplots(1, nn, figsize=(2 * nn, 2))
+        # decreae the space between the subplots
+        plt.subplots_adjust(wspace=0.0)
 
         for i in range(nn):
             if i == 0:
@@ -1107,12 +1163,12 @@ class Domain:
 
             ax[i].text(
                 0.5,
-                0.0,
+                -0.025,
                 t,
                 transform=ax[i].transAxes,
                 ha="center",
                 va="center",
-                fontsize=9,
+                fontsize=10,
                 # color=c,
             )
         # plt.subplots_adjust(wspace=0.2, hspace=-0.1)
@@ -1158,7 +1214,7 @@ if __name__ == "__main__":
     with plt.style.context(["nature"]):
         domain.plot_domain()
 
-    # Optimize the truss
+    # # Optimize the truss
     opt = Optimization(
         conn,
         xpts,
@@ -1170,23 +1226,31 @@ if __name__ == "__main__":
         ks_rho_h=settings["ks_rho_h"],
         ks_rho_blf=settings["ks_rho_blf"],
     )
+    # # x = np.array([0.5, 0.5])
+    # # x = opt.construst(x)
+    # # opt.solve_eigenvalue_problem(x)
 
-    # # Optimize the truss
-    h = [1e6, 0.16, 1e-3]
+    # # # # Optimize the truss
+    h = [1e6, 0.03, 1e-4]
+    # h = [1e6, 0.15, 0.001]
     # res0, x_hist0 = opt.optimize(h_upper=h[0])
     # res1, x_hist1 = opt.optimize(h_upper=h[1])
     # res2, x_hist2 = opt.optimize(h_upper=h[2])
     # ic(res0, res1, res2)
 
-    # # save the x results
+    # # # save the x results
     # np.save("x0.npy", res0.x)
     # np.save("x1.npy", res1.x)
     # np.save("x2.npy", res2.x)
 
-    # read the x results
-    x0 = np.load("x0.npy")
-    x1 = np.load("x1.npy")
-    x2 = np.load("x2.npy")
+    # # # read the x results
+    # x0 = np.load("x0.npy")
+    # x1 = np.load("x1.npy")
+    # x2 = np.load("x2.npy")
+    x0 = [8.506e-01, 2.112e-01]
+    x1 = [1.735e-01, 1.169e0]
+    x2 = [7.048e-02, 1.315e00]
+    x3 = [6.184e-02, 1.327e00]
 
     # visualize the truss with optimized design
     with plt.style.context(["nature"]):
@@ -1204,7 +1268,7 @@ if __name__ == "__main__":
             nfev += 1
 
     with plt.style.context(["nature"]):
-        opt.plot_contour(x0, x1, x2, h[1], h[2], n=200)
+        opt.plot_contour(x0, x1, x2, x3, h[1], h[2], n=200)
 
 
 #################################################################
